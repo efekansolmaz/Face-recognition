@@ -1,0 +1,8 @@
+__pycache__/
+*.pyc
+*.pyo
+.vs/
+models/*.onnx
+data/faces/
+*.db
+*.log
