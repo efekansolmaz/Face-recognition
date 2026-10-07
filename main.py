@@ -103,10 +103,12 @@ def main():
                 continue
 
             # A. Eger henuz tanimlanmamissa veya periyodik dogrulama gerekiyorsa
-            if track.user_id is None:
-                user_id, name, sim, is_new = face_engine.recognize_or_enroll(frame, track.face_raw)
-                track.user_id = user_id
-                track.user_name = name
+            if track.worker_id is None:
+                wid, name, code, dept, sim, is_new = face_engine.recognize_or_enroll(frame, track.face_raw)
+                track.worker_id = wid
+                track.worker_name = name
+                track.worker_code = code
+                track.worker_department = dept
 
             # B. Duygu Analizi (FERPlus)
             face_crop = frame[y:y+fh, x:x+fw]
@@ -117,14 +119,14 @@ def main():
 
             # C. Veritabanina periyodik duygu kaydi (ornek: saniyede 1 kez)
             if curr_time - track.last_log_time >= EMOTION_LOG_INTERVAL_SEC:
-                database.log_emotion(track.user_id, emotion_tr, conf)
+                database.log_emotion(track.worker_id, emotion_tr, conf)
                 track.last_log_time = curr_time
 
             # D. Gorsellestirme
             draw_corner_rect(frame, (x, y, fw, fh), emotion_color, thickness=2, d=15)
 
             # Etiket arka plan seridi
-            header_text = f"ID:{track.user_id} {track.user_name}"
+            header_text = f"{track.worker_code} {track.worker_name} ({track.worker_department})"
             sub_text = f"{track.emotion} %{int(track.emotion_conf * 100)}"
             
             # Etiket kutusu

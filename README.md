@@ -1,25 +1,38 @@
-# Real-time Yüz Tanıma, Dinamik ID Atama ve Duygu Analizi
+# Fabrika Personel Ruh Hali, Vardiya & Yüz Tanıma Analitiği
 
-Bu proje; web kamerasından alınan canlı video akışında insan yüzlerini derin öğrenme modelleriyle tespit eder, kişiye özel 128 boyutlu yüz öznitelik vektörü (embedding) çıkararak benzersiz bir ID atar, sonraki gelişlerinde aynı ID ile tanır, anlık duygu durumunu analiz eder ve tüm bu verileri kalıcı bir veritabanına kaydeder.
+Bu sistem; çok sayıda işçinin çalıştığı fabrika, atölye ve üretim tesislerinde insan yüzlerini gerçek zamanlı olarak tespit edip tanır, vardiya boyu çalışma sürelerini ve ruh hallerini analiz eder. Gün sonunda İK (İnsan Kaynakları) ve İSG yöneticilerine hem **interaktif bir Web Dashboard** hem de yazdırılabilir **Gün Sonu PDF Raporu** sunar.
 
 ---
 
-## 🚀 Özellikler
+## 🚀 Öne Çıkan Özellikler
 
-1. **Modern Yüz Tespiti (YuNet):**
-   * Klasik ve hatalı Haar Cascade yerine OpenCV'nin resmi CNN tabanlı `YuNet` modeli kullanılır. Farklı açılardan ve ışık koşullarından etkilenmez.
-2. **Derin Öğrenme Tabanlı Yüz Tanıma (SFace):**
-   * Eski LBPH algoritması yerine `SFace` (128-D Cosine Embedding) kullanılır.
-   * Model yeniden eğitime ihtiyaç duymaz; yeni bir yüz görüldüğünde milisaniyeler içinde yeni ID oluşturulur ve sonraki karelerde hemen tanınır.
-3. **Kareler Arası Kararlı Takip (Face Tracker):**
-   * IoU tabanlı takipçi sayesinde ekrandaki yüzlerin ID'si titreme (flicker) yapmaz.
-4. **Gerçek Zamanlı Duygu Analizi (FERPlus ONNX):**
-   * 8 temel duygu sınıfı (Nötr, Mutlu, Şaşkın, Üzgün, Öfkeli, İğrenmiş, Korkmuş, Mesafeli) tespit edilir.
-   * Her duygu için özel renk kodlu dinamik HUD sınır çizgileri çizilir.
-5. **Kalıcı Veritabanı ve Loglama:**
-   * Kişi profilleri (`users`: id, isim, ilk görülme, son görülme, embedding, yüz fotoğrafı) kalıcı olarak saklanır.
-   * Duygu akışları (`emotion_logs`: user_id, duygu, güven skoru, zaman damgası) saniyede bir veritabanına loglanır.
-   * Varsayılan olarak yerel `data/face_records.db` (SQLite) dosyasına yazılır. İstenirse tek satırla PostgreSQL'e bağlanabilir.
+1. **Çoklu İşçi Tespiti & Tanıma:**
+   * **OpenCV YuNet (CNN):** Kalabalık kadrajlarda aynı anda çok sayıda yüzü kaçırmadan tespit eder.
+   * **SFace (128D Embedding):** Yeni giren işçiye anında `ISC-XXX` kodu atar, yüz vektörünü kaydeder ve sonraki geçişlerinde otomatik tanır.
+2. **Kişi Bazlı "Günlük Moral Skoru" (0 - 100):**
+   * Ham duygular yerine ağırlıklı bir formülle hesaplanır:
+     * **Pozitif (+):** Mutlu (`+1.0`)
+     * **Nötr (0.0):** Normal çalışma hali
+     * **Negatif (-):** Öfkeli (`-1.0`), Üzgün (`-0.8`), Korku (`-0.7`), İğrenme (`-0.5`)
+   * **Skor Aralıkları:**
+     * `80 - 100`: Yüksek Motivasyon / Pozitif
+     * `60 - 79`: Normal / Dengeli
+     * `45 - 59`: Hafif Düşük / Yorgun
+     * `< 45`: 🚨 **Yüksek Stres / Kötü Gün (Kritik İnceleme Listesi)**
+3. **Hibrit Personel Yönetimi:**
+   * **Sıfır Kurulumla Başlama:** Kamera ilk gördüğü işçiye ID verir ve verileri toplamaya başlar.
+   * **Dashboard'dan İsimlendirme:** Yönetici, kameranın çektiği fotoğrafın altına tıklayarak tek tıkla gerçek Ad Soyad, Sicil No ve Departman atayabilir.
+   * **CSV İçe Aktarma:** İK'nın elindeki personel listesi (Sicil No, Ad Soyad, Departman, Vardiya) tek tıkla sisteme yüklenebilir.
+4. **Yönetici Web Dashboard'u (`http://127.0.0.1:5000`):**
+   * Yönetici KPI kartları (Aktif işçi, fabrika ortalama morali, kötü gün geçiren işçi sayısı).
+   * ⚠️ **Kötü Gün / Riskli Personel Uyarı Bandı**.
+   * Vardiya boyu saatlik moral trendi çizgi grafiği (Chart.js).
+   * Departman bazlı karşılaştırma çubuk grafiği.
+   * Arama, filtreleme ve personele özel düzenleme özellikli karne tablosu.
+   * Tarayıcıdan izlenebilen canlı kamera önizleme penceresi.
+5. **Kurumsal Gün Sonu PDF Raporu:**
+   * Tek tıkla indirilebilir A4 formatında, tam Türkçe Unicode destekli kurumsal PDF.
+   * Yönetici özeti, departman karşılaştırmaları, kötü gün geçirenlerin analiz ve tavsiye tablosu ve tüm işçilerin detaylı gün sonu karnesi.
 
 ---
 
@@ -27,67 +40,43 @@ Bu proje; web kamerasından alınan canlı video akışında insan yüzlerini de
 
 ```text
 Face-recognition/
-├── models/                     # ONNX derin öğrenme modelleri
-│   ├── face_detection_yunet_2023mar.onnx
-│   ├── face_recognition_sface_2021dec.onnx
-│   └── emotion-ferplus-8.onnx
-├── data/                       # Yüz fotoğrafları ve yerel veritabanı
-│   ├── faces/                  # Kaydedilen ilk yüz fotoğrafları
-│   └── face_records.db         # Kalıcı SQLite veritabanı
-├── config.py                   # Eşik değerleri, dosya yolları ve DB bağlantısı
-├── database.py                 # SQLAlchemy modelleri (User, EmotionLog) ve CRUD
-├── face_engine.py              # YuNet ve SFace entegrasyonu, dinamik kayıt motoru
-├── emotion_engine.py           # FERPlus duygu çıkarım motoru
-├── tracker.py                  # Kararlı yüz takip modülü
-├── model_downloader.py         # Modelleri otomatik indiren yardımcı script
-├── main.py                     # Gerçek zamanlı kamera döngüsü ve modern HUD
-├── report.py                   # Kayıtlı kişileri ve duygu istatistiklerini raporlama
+├── models/                     # ONNX modelleri (YuNet, SFace, FERPlus)
+├── data/                       # Veriler ve Raporlar
+│   ├── faces/                  # İşçilerin yakalanan profil fotoğrafları
+│   ├── reports/                # Üretilen Gün Sonu PDF raporları
+│   └── face_records.db         # Kalıcı SQLite veritabanı (veya PostgreSQL)
+├── templates/
+│   └── dashboard.html          # Modern, responsive koyu modlu Web Paneli
+├── web_dashboard.py            # Flask Web Sunucusu ve REST API'ler
+├── pdf_report.py               # ReportLab tabanlı otomatik PDF rapor motoru
+├── analytics.py                # Moral hesaplayıcı ve fabrika istatistik motoru
+├── database.py                 # Worker ve EmotionLog SQLAlchemy modelleri
+├── face_engine.py              # YuNet + SFace derin öğrenme yüz motoru
+├── emotion_engine.py           # FERPlus 8 sınıflı duygu analiz motoru
+├── tracker.py                  # Çoklu işçi IoU takipçisi
+├── main.py                     # Doğrudan masaüstü kamera penceresi HUD
+├── baslat.bat                  # Kolay başlatma menüsü (Dashboard / Kamera / PDF)
 └── requirements.txt            # Bağımlılıklar
 ```
 
 ---
 
-## 🛠️ Kurulum ve Çalıştırma
+## 🛠️ Nasıl Çalıştırılır?
 
-### 1. Bağımlılıkları Yükleyin:
-```bash
-pip install -r requirements.txt
-```
+### 1. En Kolay Yol:
+Proje dizinindeki **`baslat.bat`** dosyasına çift tıklayın ve menüden seçiminizi yapın:
+* **`[1]`**: Web Yönetici Dashboard'unu başlatır ve tarayıcınızda açar (`http://127.0.0.1:5000`).
+* **`[2]`**: Doğrudan masaüstü kamera penceresini açar.
+* **`[3]`**: O güne ait Gün Sonu PDF Raporunu derler.
 
-### 2. Modelleri İndirin (Zaten indirilmişse kontrol eder):
-```bash
-python model_downloader.py
-```
+### 2. Terminalden Çalıştırma:
+* **Dashboard'u Açmak İçin:**
+  ```bash
+  python web_dashboard.py
+  ```
+  Tarayıcınızdan `http://127.0.0.1:5000` adresine gidin.
 
-### 3. Uygulamayı Başlatın:
-```bash
-python main.py
-```
-
----
-
-## 🎮 Klavye Kontrolleri
-
-* **`Q` veya `ESC`**: Kamerayı ve programı güvenli şekilde sonlandırır.
-* **`S`**: Konsol ekranına anlık veritabanı özetini (toplam kişi ve duygu dağılımı) yazdırır.
-
----
-
-## 📊 Raporlama ve Dışa Aktarma
-
-Kayıtlı kişileri ve duygu geçmişini terminalde görmek veya CSV olarak dışa aktarmak için:
-```bash
-python report.py
-```
-
----
-
-## 🗄️ PostgreSQL Entegrasyonu (Opsiyonel)
-
-Varsayılan SQLite yerine PostgreSQL kullanmak için `config.py` dosyasında veya ortam değişkeninde `DATABASE_URL` değerini değiştirmeniz yeterlidir:
-
-```python
-# config.py veya .env
-DATABASE_URL = "postgresql+psycopg2://postgres:SIFRENIZ@localhost:5432/facedb"
-```
-SQLAlchemy sayesinde hiçbir kod değişikliği yapmadan tablolar PostgreSQL'de otomatik açılacaktır.
+* **PDF Raporu Üretmek İçin:**
+  ```bash
+  python pdf_report.py
+  ```
