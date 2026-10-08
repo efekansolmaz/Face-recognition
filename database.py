@@ -1,10 +1,11 @@
 import datetime
+import os
 import pickle
 import numpy as np
 import pandas as pd
 from sqlalchemy import create_engine, Column, Integer, String, Float, DateTime, LargeBinary, ForeignKey, Boolean, Text, func
 from sqlalchemy.orm import declarative_base, sessionmaker, relationship
-from config import DATABASE_URL, EMOTION_MAP
+from config import DATABASE_URL, EMOTION_MAP, FACES_DIR, DATA_RETENTION_DAYS
 
 Base = declarative_base()
 
@@ -26,6 +27,7 @@ class Worker(Base):
 
     emotion_logs = relationship("EmotionLog", back_populates="worker", cascade="all, delete-orphan")
     shift_sessions = relationship("ShiftSession", back_populates="worker", cascade="all, delete-orphan")
+    alerts = relationship("AlertEvent", back_populates="worker", cascade="all, delete-orphan")
 
     def get_embedding(self) -> np.ndarray:
         return pickle.loads(self.embedding)
@@ -42,6 +44,7 @@ class ShiftSession(Base):
 
     id = Column(Integer, primary_key=True, autoincrement=True)
     worker_id = Column(Integer, ForeignKey("workers.id"), nullable=False)
+    camera_zone = Column(String(100), default="Genel")
     start_time = Column(DateTime, default=datetime.datetime.now)
     end_time = Column(DateTime, default=datetime.datetime.now)
     duration_seconds = Column(Float, default=0.0)
@@ -54,15 +57,31 @@ class EmotionLog(Base):
 
     id = Column(Integer, primary_key=True, autoincrement=True)
     worker_id = Column(Integer, ForeignKey("workers.id"), nullable=False)
+    camera_zone = Column(String(100), default="Genel")
     emotion = Column(String(50), nullable=False)
     confidence = Column(Float, nullable=False)
     morale_weight = Column(Float, default=0.0)
+    is_yawn = Column(Boolean, default=False)
     timestamp = Column(DateTime, default=datetime.datetime.now)
 
     worker = relationship("Worker", back_populates="emotion_logs")
 
     def __repr__(self):
-        return f"<EmotionLog(worker_id={self.worker_id}, emotion='{self.emotion}', conf={self.confidence:.2f})>"
+        return f"<EmotionLog(worker_id={self.worker_id}, zone='{self.camera_zone}', emo='{self.emotion}')>"
+
+
+class AlertEvent(Base):
+    __tablename__ = "alert_events"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    worker_id = Column(Integer, ForeignKey("workers.id"), nullable=False)
+    alert_type = Column(String(50), nullable=False)  # "STRESS_ALARM", "FATIGUE_ALARM", "SAFETY_RISK"
+    message = Column(Text, nullable=False)
+    camera_zone = Column(String(100), default="Genel")
+    timestamp = Column(DateTime, default=datetime.datetime.now)
+    is_acknowledged = Column(Boolean, default=False)
+
+    worker = relationship("Worker", back_populates="alerts")
 
 
 # --- ENGINE & SESSION ---
@@ -75,7 +94,7 @@ SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
 def init_db():
     Base.metadata.create_all(bind=engine)
-    print(f"[DB] Fabrika veritabani hazirlandi: {DATABASE_URL}")
+    print(f"[DB] Fabrika kurumsal veritabanı hazırlandı: {DATABASE_URL}")
 
 init_db()
 
@@ -100,7 +119,7 @@ def load_all_workers():
                     "is_identified": w.is_identified
                 })
             except Exception as e:
-                print(f"[DB HATA] Worker {w.id} embedding hatasi: {e}")
+                print(f"[DB HATA] Worker {w.id} embedding hatası: {e}")
         return result
     finally:
         session.close()
@@ -181,21 +200,27 @@ def update_worker_profile(worker_id: int, name: str, worker_code: str = None, de
     finally:
         session.close()
 
-def log_emotion(worker_id: int, emotion: str, confidence: float):
+def log_emotion(worker_id: int, emotion: str, confidence: float, camera_zone: str = "Genel", is_yawn: bool = False):
     session = SessionLocal()
     try:
-        # Ağırlığı Emotion Map'ten bul
         weight = 0.0
         for info in EMOTION_MAP.values():
             if info["tr"] == emotion or info["name"] == emotion:
                 weight = info.get("weight", 0.0)
                 break
 
+        # Esneme tespit edildiyse yorgunluk ağırlığı ata
+        if is_yawn:
+            weight = -0.6
+            emotion = "Yorgun / Esniyor"
+
         log_entry = EmotionLog(
             worker_id=worker_id,
+            camera_zone=camera_zone,
             emotion=emotion,
             confidence=float(confidence),
             morale_weight=weight,
+            is_yawn=is_yawn,
             timestamp=datetime.datetime.now()
         )
         session.add(log_entry)
@@ -203,11 +228,45 @@ def log_emotion(worker_id: int, emotion: str, confidence: float):
     finally:
         session.close()
 
+def create_alert(worker_id: int, alert_type: str, message: str, camera_zone: str = "Genel"):
+    session = SessionLocal()
+    try:
+        alert = AlertEvent(
+            worker_id=worker_id,
+            alert_type=alert_type,
+            message=message,
+            camera_zone=camera_zone,
+            timestamp=datetime.datetime.now()
+        )
+        session.add(alert)
+        session.commit()
+        print(f"[ALARM] {alert_type}: {message} (Bölge: {camera_zone})")
+    finally:
+        session.close()
+
+def get_active_alerts(limit: int = 20):
+    session = SessionLocal()
+    try:
+        alerts = session.query(AlertEvent, Worker).join(Worker).order_by(AlertEvent.timestamp.desc()).limit(limit).all()
+        result = []
+        for a, w in alerts:
+            result.append({
+                "id": a.id,
+                "worker_id": w.id,
+                "worker_name": w.name,
+                "worker_code": w.worker_code,
+                "department": w.department,
+                "alert_type": a.alert_type,
+                "message": a.message,
+                "camera_zone": a.camera_zone,
+                "timestamp": a.timestamp.strftime("%H:%M:%S"),
+                "is_acknowledged": a.is_acknowledged
+            })
+        return result
+    finally:
+        session.close()
+
 def import_workers_from_csv(csv_path: str) -> tuple[int, int]:
-    """
-    CSV dosyasından personel listesini içeri aktarır.
-    Format: worker_code, name, department, shift
-    """
     session = SessionLocal()
     added, skipped = 0, 0
     try:
@@ -226,7 +285,6 @@ def import_workers_from_csv(csv_path: str) -> tuple[int, int]:
                 skipped += 1
                 continue
 
-            # Dummy embedding ile ön kayıt açılabilir (Kamera ilk gördüğünde embedding atanır)
             dummy_emb = np.zeros((1, 128), dtype=np.float32)
             w = Worker(
                 worker_code=code,
@@ -243,3 +301,22 @@ def import_workers_from_csv(csv_path: str) -> tuple[int, int]:
         return added, skipped
     finally:
         session.close()
+
+def cleanup_old_photos(days: int = DATA_RETENTION_DAYS) -> int:
+    """KVKK uyumu için belirlenen günden eski yüz fotoğraflarını temizler."""
+    cutoff_time = datetime.datetime.now() - datetime.timedelta(days=days)
+    deleted_count = 0
+    if os.path.exists(FACES_DIR):
+        for filename in os.listdir(FACES_DIR):
+            file_path = os.path.join(FACES_DIR, filename)
+            if os.path.isfile(file_path):
+                file_mtime = datetime.datetime.fromtimestamp(os.path.getmtime(file_path))
+                if file_mtime < cutoff_time:
+                    try:
+                        os.remove(file_path)
+                        deleted_count += 1
+                    except Exception:
+                        pass
+    if deleted_count > 0:
+        print(f"[KVKK] {deleted_count} adet {days} günden eski yüz fotoğrafı temizlendi.")
+    return deleted_count

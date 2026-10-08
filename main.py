@@ -110,16 +110,16 @@ def main():
                 track.worker_code = code
                 track.worker_department = dept
 
-            # B. Duygu Analizi (FERPlus)
+            # B. Duygu Analizi (FERPlus - CLAHE ve esneme/yorgunluk filtreli)
             face_crop = frame[y:y+fh, x:x+fw]
-            _, emotion_tr, conf, emotion_color = emotion_recognizer.predict(face_crop)
+            _, emotion_tr, conf, emotion_color, is_yawn = emotion_recognizer.predict(face_crop, track.face_raw)
             track.emotion = emotion_tr
             track.emotion_conf = conf
             track.emotion_color = emotion_color
 
             # C. Veritabanina periyodik duygu kaydi (ornek: saniyede 1 kez)
             if curr_time - track.last_log_time >= EMOTION_LOG_INTERVAL_SEC:
-                database.log_emotion(track.worker_id, emotion_tr, conf)
+                database.log_emotion(track.worker_id, emotion_tr, conf, is_yawn=is_yawn)
                 track.last_log_time = curr_time
 
             # D. Gorsellestirme
